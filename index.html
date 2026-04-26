@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Key Evaluator</title>
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body { 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            background: var(--bg-gradient); color: var(--text-main);
+            display: flex; justify-content: center; align-items: center; 
+            min-height: 100vh; margin: 0; position: relative; z-index: 1;
+        }
+
+        /* Subtle animated grid background */
+        body::before {
+            content: ""; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background-image: linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+            background-size: 30px 30px; z-index: -1;
+        }
+
+        .container { 
+            background: var(--card-bg); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1); padding: 40px; 
+            border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
+            max-width: 500px; width: 100%; 
+        }
+
+        h2 { margin-top: 0; font-size: 1.8rem; text-align: center; margin-bottom: 5px; }
+        .subtitle { text-align: center; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 30px; }
+
+        .input-group { position: relative; margin-bottom: 30px; }
+        
+        input[type="text"] { 
+            width: 100%; padding: 18px; padding-right: 50px;
+            background: rgba(0, 0, 0, 0.3); border: 2px solid rgba(255, 255, 255, 0.1); 
+            color: white; border-radius: 12px; box-sizing: border-box; 
+            font-size: 1.5rem; font-family: monospace; transition: all 0.3s ease;
+        }
+        
+        input[type="text"]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 15px rgba(79, 70, 229, 0.3); }
+        input[type="text"]::placeholder { color: rgba(255,255,255,0.2); }
+
+        .dashboard { 
+            background: rgba(0, 0, 0, 0.3); padding: 20px; 
+            border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.05); 
+        }
+
+        .metric-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 0.95rem; }
+        .metric-label { color: var(--text-muted); }
+        .metric-value { font-weight: bold; font-family: monospace; font-size: 1.05rem;}
+        
+        .highlight { color: #fbbf24; }
+
+        .strength-bar-container { 
+            width: 100%; height: 8px; background: rgba(255,255,255,0.1); 
+            border-radius: 4px; margin-top: 20px; overflow: hidden; 
+        }
+        .strength-bar { height: 100%; width: 0%; transition: width 0.3s ease, background-color 0.3s ease; }
+        
+        .disclaimer { text-align: center; font-size: 0.75rem; color: #64748b; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Dynamic Evaluator</h2>
+    <div class="subtitle">Real-time cryptographic strength analysis</div>
+    
+    <div class="input-group">
+        <input type="text" id="passwordInput" placeholder="Type a key or passphrase..." autocomplete="off">
+    </div>
+
+    <div class="dashboard">
+        <div class="metric-row">
+            <span class="metric-label">Length (L)</span>
+            <span class="metric-value" id="valLength">0</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-label">Character Pool (R)</span>
+            <span class="metric-value" id="valPool">0</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-label">Shannon Entropy</span>
+            <span class="metric-value" id="valEntropy">0.00 bits</span>
+        </div>
+        <div class="metric-row" style="margin-top: 15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 15px;">
+            <span class="metric-label">Est. Brute-Force Time</span>
+            <span class="metric-value highlight" id="valTime">Instant</span>
+        </div>
+        
+        <div class="strength-bar-container">
+            <div class="strength-bar" id="strengthBar"></div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 10px; font-weight: bold; letter-spacing: 1px;" id="valTier">
+            Awaiting Input
+        </div>
+    </div>
+    
+    <div class="disclaimer">🔒 Keys are evaluated entirely in your local browser. No data is sent over the network.</div>
+</div>
+
+<script>
+    const input = document.getElementById('passwordInput');
+    const valLength = document.getElementById('valLength');
+    const valPool = document.getElementById('valPool');
+    const valEntropy = document.getElementById('valEntropy');
+    const valTime = document.getElementById('valTime');
+    const valTier = document.getElementById('valTier');
+    const strengthBar = document.getElementById('strengthBar');
+
+    // The mathematical logic runs every time the user presses a key
+    input.addEventListener('input', function() {
+        const pwd = this.value;
+        const length = pwd.length;
+        
+        // 1. Calculate Pool Size (R)
+        let poolSize = 0;
+        if (/[a-z]/.test(pwd)) poolSize += 26;
+        if (/[A-Z]/.test(pwd)) poolSize += 26;
+        if (/[0-9]/.test(pwd)) poolSize += 10;
+        if (/[^a-zA-Z0-9]/.test(pwd)) poolSize += 32; // Approximating 32 common symbols
+        
+        // 2. Calculate Shannon Entropy (E = L * log2(R))
+        let entropy = 0;
+        if (poolSize > 0 && length > 0) {
+            entropy = length * Math.log2(poolSize);
+        }
+
+        // 3. Estimate Brute Force Time (assuming 10 billion guesses/sec)
+        let timeString = "Instant";
+        if (entropy > 0) {
+            const guessesPerSecond = 10000000000;
+            const totalGuesses = Math.pow(2, entropy);
+            const seconds = totalGuesses / guessesPerSecond;
+            
+            if (seconds < 1) timeString = "Less than a second";
+            else if (seconds < 60) timeString = Math.round(seconds) + " seconds";
+            else if (seconds < 3600) timeString = Math.round(seconds / 60) + " minutes";
+            else if (seconds < 86400) timeString = Math.round(seconds / 3600) + " hours";
+            else if (seconds < 31536000) timeString = Math.round(seconds / 86400) + " days";
+            else {
+                const years = seconds / 31536000;
+                if (years > 1000000000) timeString = "Over a billion years";
+                else if (years > 1000000) timeString = "Over a million years";
+                else timeString = Math.round(years).toLocaleString() + " years";
+            }
+        }
+
+        // 4. Update the Dashboard Text
+        valLength.innerText = length;
+        valPool.innerText = poolSize;
+        valEntropy.innerText = entropy.toFixed(2) + " bits";
+        valTime.innerText = timeString;
+
+        // 5. Update Visual Strength Meter
+        let tier = "";
+        let color = "";
+        let width = 0;
+
+        if (length === 0) {
+            tier = "Awaiting Input"; color = "transparent"; width = 0;
+        } else if (entropy < 40) {
+            tier = "Weak (Vulnerable)"; color = "#ef4444"; width = Math.min((entropy/100)*100, 25);
+        } else if (entropy < 60) {
+            tier = "Moderate"; color = "#eab308"; width = Math.min((entropy/100)*100, 50);
+        } else if (entropy < 80) {
+            tier = "Strong"; color = "#22c55e"; width = Math.min((entropy/100)*100, 75);
+        } else {
+            tier = "Very Strong (Highly Resistant)"; color = "#3b82f6"; width = 100;
+        }
+
+        valTier.innerText = tier;
+        valTier.style.color = color;
+        strengthBar.style.width = width + "%";
+        strengthBar.style.backgroundColor = color;
+    });
+</script>
+
+</body>
+</html>
